@@ -28,6 +28,7 @@ SCALE = 7  # pixels per sprite pixel
 FRAME_MS = 350  # animation speed
 POLL_MS = 200  # state.json poll interval
 DONE_REVERT_S = 8  # done -> idle after this many seconds
+ERROR_REVERT_S = 20  # error -> idle after this many seconds
 STALE_S = 15 * 60  # no hook updates for this long -> idle
 MAGIC = "#012001"  # transparency key color (Windows); unlikely real color
 
@@ -36,6 +37,8 @@ PALETTE = {
     "e": "#3b251d",  # eyes
     "y": "#ffd75a",  # highlight / "!"
     "b": "#6eaae6",  # sweat drop
+    "w": "#ffffff",  # flash
+    "r": "#e25555",  # error
 }
 
 # ----------------------------------------------------------------- sprites
@@ -69,6 +72,21 @@ def overlay(rows, pixels):
     return ["".join(r) for r in grid]
 
 
+def shift(rows, dx):
+    if dx > 0:
+        return ["." * dx + r[:-dx] for r in rows]
+    if dx < 0:
+        return [r[-dx:] + "." * -dx for r in rows]
+    return rows
+
+
+def mark(pixels, color):
+    return {pos: color for pos in pixels}
+
+
+QUESTION = [(0, 7), (0, 8), (0, 9), (1, 9), (2, 8), (3, 8)]  # "?" above right
+CROSS = [(0, 5), (0, 7), (1, 6), (2, 5), (2, 7)]  # "x" above head
+
 FRAMES = {
     "idle": [
         frame(creature(), 4),
@@ -78,15 +96,28 @@ FRAMES = {
         overlay(frame(creature(), 4), {(3, 10): "b"}),  # sweat drop falls
         overlay(frame(creature(), 5), {(4, 11): "b"}),
     ],
+    "waiting_input": [  # shake left/right with a flashing "?"
+        overlay(frame(shift(creature(), -1), 4), mark(QUESTION, "y")),
+        overlay(frame(shift(creature(), 1), 4), mark(QUESTION, "w")),
+        overlay(frame(shift(creature(), -1), 4), mark(QUESTION, "w")),
+        overlay(frame(shift(creature(), 1), 4), mark(QUESTION, "y")),
+    ],
     "done": [  # crouch, jump with "!", sparkle, land
         frame(creature("closed"), 5),
         overlay(frame(creature(), 2), {(0, 5): "y", (0, 6): "y", (1, 5): "y", (1, 6): "y"}),
         overlay(frame(creature(), 3), {(1, 1): "y", (0, 10): "y", (2, 11): "y"}),
         frame(creature(), 4),
     ],
+    "error": [  # trembling with a red flashing "x"
+        overlay(frame(shift(creature(), -1), 4), mark(CROSS, "r")),
+        overlay(frame(shift(creature(), 1), 4), mark(CROSS, "w")),
+    ],
 }
 
 STATES = set(FRAMES)
+
+# attention states animate faster so they pop
+FRAME_MS_BY_STATE = {"waiting_input": 180, "done": 250, "error": 180}
 
 
 def load_png_frames(state):
@@ -113,7 +144,7 @@ class Pet:
 
         w, h = GRID_W * SCALE, GRID_H * SCALE
         self.canvas = tk.Canvas(
-            self.root, width=w, height=h, bg=MAGIC, highlightthickness=0
+            self.root, width=w, height=h, bg=self.bg, highlightthickness=0
         )
         self.canvas.pack()
 
@@ -131,16 +162,18 @@ class Pet:
     # -- window -----------------------------------------------------------
 
     def setup_transparency(self):
-        self.root.configure(bg=MAGIC)
+        self.bg = MAGIC
         try:
             if sys.platform == "win32":
                 self.root.attributes("-transparentcolor", MAGIC)
             elif sys.platform == "darwin":
                 self.root.attributes("-transparent", True)
-            else:  # X11: no color-key transparency; slight alpha instead
+            else:  # X11: no color-key transparency; neutral dark + alpha
+                self.bg = "#1f1f1f"
                 self.root.attributes("-alpha", 0.95)
         except tk.TclError:
-            pass  # solid background is an acceptable fallback
+            self.bg = "#1f1f1f"  # solid background is an acceptable fallback
+        self.root.configure(bg=self.bg)
 
     def place_window(self, w, h):
         try:
@@ -206,6 +239,8 @@ class Pet:
             pass  # missing/partial file: keep current state
         if self.state == "done" and time.time() - self.state_since > DONE_REVERT_S:
             self.set_state("idle")
+        elif self.state == "error" and time.time() - self.state_since > ERROR_REVERT_S:
+            self.set_state("idle")
         self.root.after(POLL_MS, self.poll_state)
 
     def set_state(self, state):
@@ -227,7 +262,7 @@ class Pet:
             frames = FRAMES[self.state]
             self.draw_grid(frames[self.tick % len(frames)])
         self.tick += 1
-        self.root.after(FRAME_MS, self.animate)
+        self.root.after(FRAME_MS_BY_STATE.get(self.state, FRAME_MS), self.animate)
 
     def draw_grid(self, rows):
         for y, row in enumerate(rows):

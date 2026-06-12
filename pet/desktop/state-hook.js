@@ -33,9 +33,24 @@ function shortDetail(p) {
 function mapState(p) {
   switch (p.hook_event_name) {
     case 'SessionStart':
+    case 'SessionEnd':
       return { state: 'idle', detail: '' };
+    case 'UserPromptSubmit':
+      return { state: 'working', detail: 'thinking' };
     case 'PreToolUse':
       return { state: 'working', detail: [p.tool_name, shortDetail(p)].filter(Boolean).join(': ') };
+    case 'Notification':
+      // permission_prompt / elicitation_dialog need the user; idle_prompt
+      // means Claude is waiting for the next prompt (back to idle)
+      if (p.notification_type === 'idle_prompt') return { state: 'idle', detail: '' };
+      if (p.notification_type === 'permission_prompt' || p.notification_type === 'elicitation_dialog') {
+        return { state: 'waiting_input', detail: String(p.message || '').slice(0, 60) };
+      }
+      return null;
+    case 'PostToolUseFailure':
+      return { state: 'error', detail: [p.tool_name, String(p.tool_error || '').slice(0, 60)].filter(Boolean).join(': ') };
+    case 'StopFailure':
+      return { state: 'error', detail: 'API error' };
     case 'Stop':
       return { state: 'done', detail: '' };
     default:

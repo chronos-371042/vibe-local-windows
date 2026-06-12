@@ -11,3 +11,5 @@ node pet/pet.js status   # quick status card
 ```
 
 See [pet/README.md](pet/README.md) for details and Claude Code integration (日本語ドキュメントあり).
+
+There is also a **desktop pet** (Codex Pets-style, transparent always-on-top window) that visualizes Claude Code state via hooks — see [pet/desktop/README.md](pet/desktop/README.md).

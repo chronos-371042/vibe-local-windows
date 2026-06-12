@@ -22,7 +22,16 @@ const MARKER = 'state-hook.js';
 
 // Events the pet listens to. Exit code never matters for the pet itself,
 // but timeout keeps a wedged node process from delaying Claude Code.
-const EVENTS = ['SessionStart', 'PreToolUse', 'Stop'];
+const EVENTS = [
+  'SessionStart',
+  'SessionEnd',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'Notification',
+  'PostToolUseFailure',
+  'StopFailure',
+  'Stop',
+];
 
 function hookEntry() {
   return {
