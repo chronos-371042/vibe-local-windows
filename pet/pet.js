@@ -35,6 +35,7 @@ function defaultState() {
     lastFed: Date.now(),
     lastPlayed: 0,
     lastWorked: 0,
+    lastActivity: '',
   };
 }
 
@@ -101,6 +102,7 @@ const PALETTE = {
   e: [59, 37, 29], // eyes
   p: [236, 160, 120], // blush
   t: [120, 170, 230], // tear
+  m: [125, 70, 48], // mini-icon eyes (midtone keeps the tiny silhouette solid)
 };
 
 const SPRITES = {
@@ -175,11 +177,7 @@ function useColor() {
   return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && process.env.VIBE_PET_ASCII !== '1';
 }
 
-function renderRows(rows) {
-  if (!useColor()) {
-    const map = { o: '#', e: 'o', p: '~', t: ',' };
-    return rows.map((r) => [...r].map((ch) => map[ch] || ' ').join(''));
-  }
+function renderHalfBlocks(rows) {
   if (rows.length % 2) rows = [...rows, '.'.repeat(rows[0].length)];
   const fg = (c) => `\x1b[38;2;${c[0]};${c[1]};${c[2]}m`;
   const bg = (c) => `\x1b[48;2;${c[0]};${c[1]};${c[2]}m`;
@@ -197,6 +195,30 @@ function renderRows(rows) {
     lines.push(line + RESET);
   }
   return lines;
+}
+
+function renderRows(rows) {
+  if (!useColor()) {
+    const map = { o: '#', e: 'o', p: '~', t: ',' };
+    return rows.map((r) => [...r].map((ch) => map[ch] || ' ').join(''));
+  }
+  return renderHalfBlocks(rows);
+}
+
+// Two-pixel-tall versions of each stage: exactly one terminal line when
+// rendered with half blocks, so the pet can live in the status line.
+const MINI = {
+  egg: ['.oo.', 'oooo'],
+  baby: ['.ooo.', 'omomo'],
+  kid: ['.o..o.', 'omoomo'],
+  adult: ['.o....o.', 'oomoomoo'],
+};
+
+function miniIcon(state, mood) {
+  if (process.env.NO_COLOR) return null;
+  let rows = MINI[stageOf(state).id];
+  if (mood === 'sleepy') rows = rows.map((r) => r.replace(/m/g, 'o'));
+  return renderHalfBlocks(rows)[0];
 }
 
 const FACES = {
@@ -239,10 +261,49 @@ function play(state) {
   saveState(state);
 }
 
-function addXp(state, amount) {
+function addXp(state, amount, activity) {
   state.xp += amount;
   state.lastWorked = Date.now();
+  if (activity) state.lastActivity = activity;
   saveState(state);
+}
+
+function truncate(s, n) {
+  return s.length > n ? s.slice(0, n - 3) + '...' : s;
+}
+
+// Build a short "what is Claude doing" label from a hook payload
+// (Claude Code pipes the hook event as JSON on stdin).
+function summarizeActivity(payload) {
+  if (payload.hook_event_name === 'Stop') return 'task done!';
+  const tool = payload.tool_name;
+  if (!tool) return '';
+  const input = payload.tool_input || {};
+  let detail =
+    input.description ||
+    (input.file_path && path.basename(input.file_path)) ||
+    input.pattern ||
+    input.command ||
+    input.skill ||
+    '';
+  detail = String(detail).replace(/\s+/g, ' ').trim();
+  return truncate(detail ? `${tool}: ${detail}` : tool, 48);
+}
+
+function readHookPayload() {
+  if (process.stdin.isTTY) return null;
+  try {
+    const raw = fs.readFileSync(0, 'utf8').trim();
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Activity is "current" while Claude is plausibly still working on it.
+function currentActivity(state, now = Date.now()) {
+  if (state.lastActivity && now - state.lastWorked < 10 * 60 * 1000) return state.lastActivity;
+  return '';
 }
 
 function statusCard(state) {
@@ -259,6 +320,7 @@ function statusCard(state) {
     `   mood: ${moodOf(state, now)}   age: ${ageDays}d`,
     `   food ${bar(fullnessOf(state, now))} ${fullnessOf(state, now)}%`,
     `   xp   ${state.xp}` + (next ? `  (next stage at ${next.min})` : '  (fully grown)'),
+    ...(currentActivity(state, now) ? [`   now  ${currentActivity(state, now)}`] : []),
     '',
   ];
   return lines.join('\n');
@@ -268,9 +330,12 @@ function statusLine(state) {
   const now = Date.now();
   const stage = stageOf(state).id;
   const mood = moodOf(state, now);
-  let face = (FACES[stage] && FACES[stage][mood]) || FACES.default[mood] || FACES.default.content;
-  if (!process.env.NO_COLOR) face = `\x1b[38;2;209;123;85m${face}${RESET}`;
-  return `${face} ${state.name} Lv.${levelOf(state)} ${bar(fullnessOf(state, now), 5)}`;
+  let lead = miniIcon(state, mood);
+  if (!lead) {
+    lead = (FACES[stage] && FACES[stage][mood]) || FACES.default[mood] || FACES.default.content;
+  }
+  const tail = currentActivity(state, now) || mood;
+  return `${lead} ${state.name} Lv.${levelOf(state)} ${bar(fullnessOf(state, now), 5)} | ${truncate(tail, 48)}`;
 }
 
 /* ------------------------------------------------------------ live view */
@@ -282,16 +347,19 @@ function live(state) {
   let toastUntil = 0;
 
   const render = () => {
+    // pick up XP / activity written by Claude Code hooks while we run
+    Object.assign(state, loadState());
     const now = Date.now();
     const frames = framesFor(state, now);
     const frame = frames[tick % frames.length];
+    const activity = currentActivity(state, now);
     const out = [
       '',
       `   vibe-pet  --  ${state.name}  (${stageOf(state).label}, Lv.${levelOf(state)})`,
       '',
       ...frame.map((l) => '      ' + l),
       '',
-      `   mood: ${moodOf(state, now)}`,
+      `   mood: ${moodOf(state, now)}${activity ? `   now: ${activity}` : ''}`,
       `   food ${bar(fullnessOf(state, now))} ${fullnessOf(state, now)}%   xp ${state.xp}`,
       '',
       `   ${now < toastUntil ? toast : '[f] feed   [p] play   [q] quit'}`,
@@ -373,7 +441,8 @@ function main() {
         process.exit(1);
       }
       const before = stageOf(state).id;
-      addXp(state, n);
+      const payload = readHookPayload();
+      addXp(state, n, payload ? summarizeActivity(payload) : '');
       if (stageOf(state).id !== before) {
         console.log(`${state.name} evolved to ${stageOf(state).label}!`);
       }

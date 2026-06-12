@@ -57,12 +57,17 @@ Codex のペットのように、**Claude Code が作業するたびにペット
 
 `pet/claude-settings.example.json` の内容をプロジェクトの `.claude/settings.json`(またはユーザー設定 `~/.claude/settings.json`)にマージしてください:
 
-- **statusLine** — Claude Code のステータスラインにペットを表示
-  例: `(o.o) Vibe Lv.7 [###--]`
-- **PostToolUse hook** — Claude Code がツールを使うたびに +1 xp
+- **statusLine** — ステータスラインに**ドット絵のミニアイコン**(1行サイズのペット)が常駐し、**いまClaude Codeがしている作業**が小さくテキスト表示されます:
+
+  ```
+  ▄█▄ Vibe Lv.7 [###--] | Edit: pet.js
+  ```
+
+  作業内容は hooks が受け取るイベントから自動で要約されます(例: `Edit: pet.js`、`Bash: Run the full test suite`、完了時は `task done!`)。作業していないときはペットの気分が表示されます。
+- **PostToolUse hook** — Claude Code がツールを使うたびに +1 xp(同時に作業内容を記録)
 - **Stop hook** — タスク完了ごとに +5 xp
 
-つまり、Claude Code に仕事をさせるほどペットが育ちます。作業中はステータスラインの顔が `(o.o)*` になります。
+つまり、Claude Code に仕事をさせるほどペットが育ちます。`node pet/pet.js` のライブ表示を別ペインで常駐させておくと、大きいペットの横に `now: ...` として同じ作業内容が表示されます(hooks の更新を自動で拾います)。
 
 > ユーザー設定に入れる場合は、コマンドをフルパスにしてください
 > (例: `node C:/path/to/vibe-local-windows/pet/pet.js statusline`)。
