@@ -1,0 +1,28 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "node pet/pet.js statusline"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node pet/pet.js xp 1"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node pet/pet.js xp 5"
+          }
+        ]
+      }
+    ]
+  }
+}
