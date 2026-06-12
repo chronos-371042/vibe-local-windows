@@ -91,81 +91,113 @@ function moodOf(state, now = Date.now()) {
 
 /* ----------------------------------------------------------------- art */
 
-// Two frames per pose; ASCII only so it renders in plain cmd.exe too.
-const ART = {
+// Pixel-art sprites modeled on the Codex pet: a small terracotta creature
+// with two ears, dot eyes and stubby legs. Each pixel is one palette key;
+// '.' is transparent. Rendered with half-block characters (two pixels per
+// terminal cell) in 24-bit color, with a plain-ASCII fallback.
+
+const PALETTE = {
+  o: [209, 123, 85], // terracotta body
+  e: [59, 37, 29], // eyes
+  p: [236, 160, 120], // blush
+  t: [120, 170, 230], // tear
+};
+
+const SPRITES = {
   egg: {
-    idle: [
-      ['   .-"-.   ', '  /     \\  ', '  | o o |  ', '  \\     /  ', "   '-.-'   "],
-      ['   .-"-.   ', '  /     \\  ', '  | . . |  ', '  \\     /  ', "   '-.-'   "],
+    body: [
+      '...oooo...',
+      '..oooooo..',
+      '.oooooooo.',
+      '.oooooooo.',
+      '..oooooo..',
     ],
+    eyes: [],
   },
   baby: {
-    idle: [
-      ['   .---.   ', '  ( o.o )  ', "   `---'   "],
-      ['   .---.   ', '  ( -.- )  ', "   `---'   "],
+    body: [
+      '.oooooo.',
+      '.oooooo.',
+      '.oooooo.',
+      '..o..o..',
     ],
-    happy: [
-      ['   .---.   ', '  ( ^.^ )  ', "   `---'   "],
-      ['   .---.   ', '  ( ^o^ )  ', "   `---'   "],
-    ],
-    hungry: [
-      ['   .---.   ', '  ( ;.; )  ', "   `---'   "],
-      ['   .---.   ', '  ( ;o; )  ', "   `---'   "],
-    ],
-    sleepy: [
-      ['   .---.   ', '  ( -.- )z ', "   `---'   "],
-      ['   .---.  Z', '  ( -.- )  ', "   `---'   "],
-    ],
-    working: [
-      ['   .---.   ', '  ( o.o )_ ', "   `---'   "],
-      ['   .---. _ ', '  ( o.o )  ', "   `---'   "],
-    ],
+    eyes: [[1, 2], [1, 5]],
   },
   kid: {
-    idle: [
-      ['   /\\_/\\   ', '  ( o.o )  ', '   (___)   '],
-      ['   /\\_/\\   ', '  ( -.- )  ', '   (___)   '],
+    body: [
+      '.o......o.',
+      '.oooooooo.',
+      '.oooooooo.',
+      '.oooooooo.',
+      '..o.oo.o..',
     ],
-    happy: [
-      ['   /\\_/\\   ', '  ( ^.^ )  ', '   (___)~  '],
-      ['   /\\_/\\   ', '  ( ^o^ )  ', '  ~(___)   '],
-    ],
-    hungry: [
-      ['   /\\_/\\   ', '  ( ;.; )  ', '   (___)   '],
-      ['   /\\_/\\   ', '  ( ;o; )  ', '   (___)   '],
-    ],
-    sleepy: [
-      ['   /\\_/\\   ', '  ( -.- )z ', '   (___)   '],
-      ['   /\\_/\\  Z', '  ( -.- )  ', '   (___)   '],
-    ],
-    working: [
-      ['   /\\_/\\   ', '  ( o.o )_ ', '   (___)   '],
-      ['   /\\_/\\ _ ', '  ( o.o )  ', '   (___)   '],
-    ],
+    eyes: [[2, 2], [2, 7]],
   },
   adult: {
-    idle: [
-      ['   /\\_/\\   ', '  ( o.o )  ', '   > ^ <   '],
-      ['   /\\_/\\   ', '  ( -.- )  ', '   > ^ <   '],
+    body: [
+      '..o......o..',
+      '.oooooooooo.',
+      'oooooooooooo',
+      'oooooooooooo',
+      '..o..oo..o..',
     ],
-    happy: [
-      ['   /\\_/\\   ', '  ( ^.^ )  ', '   > w <~  '],
-      ['   /\\_/\\   ', '  ( ^o^ )  ', '  ~> w <   '],
-    ],
-    hungry: [
-      ['   /\\_/\\   ', '  ( ;.; )  ', '   > ^ <   '],
-      ['   /\\_/\\   ', '  ( ;o; )  ', '   > ^ <   '],
-    ],
-    sleepy: [
-      ['   /\\_/\\   ', '  ( -.- )z ', '   > ^ <   '],
-      ['   /\\_/\\  Z', '  ( -.- )  ', '   > ^ <   '],
-    ],
-    working: [
-      ['   /\\_/\\   ', '  ( o.o )_ ', '   > ^ <   '],
-      ['   /\\_/\\ _ ', '  ( o.o )  ', '   > ^ <   '],
-    ],
+    eyes: [[2, 2], [2, 9]],
   },
 };
+
+function buildGrid(stageId, mood, frame) {
+  const def = SPRITES[stageId];
+  const g = def.body.map((r) => r.split(''));
+
+  if (stageId === 'egg') {
+    // wobble side to side
+    const rows = g.map((r) => r.join(''));
+    return frame === 0 ? rows : rows.map((r) => '.' + r.slice(0, -1));
+  }
+
+  const blink = mood === 'sleepy' || (mood === 'content' && frame === 1);
+  for (const [r, c] of def.eyes) {
+    if (blink) continue;
+    g[r][c] = 'e';
+    if (mood === 'happy') g[r + 1][c] = 'p';
+    if (mood === 'hungry') g[r + 1][c] = 't';
+  }
+
+  // gentle one-pixel bob between frames
+  const rows = g.map((r) => r.join(''));
+  const blank = '.'.repeat(rows[0].length);
+  return frame === 0 ? [...rows, blank] : [blank, ...rows];
+}
+
+const RESET = '\x1b[0m';
+
+function useColor() {
+  return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && process.env.VIBE_PET_ASCII !== '1';
+}
+
+function renderRows(rows) {
+  if (!useColor()) {
+    const map = { o: '#', e: 'o', p: '~', t: ',' };
+    return rows.map((r) => [...r].map((ch) => map[ch] || ' ').join(''));
+  }
+  if (rows.length % 2) rows = [...rows, '.'.repeat(rows[0].length)];
+  const fg = (c) => `\x1b[38;2;${c[0]};${c[1]};${c[2]}m`;
+  const bg = (c) => `\x1b[48;2;${c[0]};${c[1]};${c[2]}m`;
+  const lines = [];
+  for (let y = 0; y < rows.length; y += 2) {
+    let line = '';
+    for (let x = 0; x < rows[y].length; x++) {
+      const top = PALETTE[rows[y][x]];
+      const bot = PALETTE[(rows[y + 1] || '')[x]];
+      if (top && bot) line += fg(top) + bg(bot) + '▀';
+      else if (top) line += RESET + fg(top) + '▀';
+      else if (bot) line += RESET + fg(bot) + '▄';
+      else line += RESET + ' ';
+    }
+    lines.push(line + RESET);
+  }
+  return lines;
+}
 
 const FACES = {
   egg: { incubating: '(egg)' },
@@ -181,8 +213,11 @@ const FACES = {
 function framesFor(state, now = Date.now()) {
   const stage = stageOf(state).id;
   const mood = moodOf(state, now);
-  const set = ART[stage];
-  return set[mood] || set.idle;
+  return [0, 1].map((f) => {
+    const lines = renderRows(buildGrid(stage, mood, f));
+    if (mood === 'sleepy') lines[0] += f === 0 ? '  z' : '  Z';
+    return lines;
+  });
 }
 
 function bar(value, width = 10) {
@@ -233,7 +268,8 @@ function statusLine(state) {
   const now = Date.now();
   const stage = stageOf(state).id;
   const mood = moodOf(state, now);
-  const face = (FACES[stage] && FACES[stage][mood]) || FACES.default[mood] || FACES.default.content;
+  let face = (FACES[stage] && FACES[stage][mood]) || FACES.default[mood] || FACES.default.content;
+  if (!process.env.NO_COLOR) face = `\x1b[38;2;209;123;85m${face}${RESET}`;
   return `${face} ${state.name} Lv.${levelOf(state)} ${bar(fullnessOf(state, now), 5)}`;
 }
 
